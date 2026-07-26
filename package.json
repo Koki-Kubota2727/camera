@@ -8,8 +8,8 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "predeploy": "expo export -p web",
-    "deploy": "gh-pages --nojekyll -d dist",
+    "predeploy": "expo export -p web && node scripts/prepare-pages.js",
+    "deploy": "gh-pages --nojekyll --dotfiles -d dist -t",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
