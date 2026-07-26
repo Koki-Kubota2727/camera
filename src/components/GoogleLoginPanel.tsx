@@ -8,6 +8,7 @@ import {
   getGoogleIosClientId,
   getGoogleWebClientId
 } from "@/services/googleAuth/googleAuthConfig";
+import { signInWithGoogleIdentityServices } from "@/services/googleAuth/googleIdentityWeb";
 import { saveGoogleToken, toStoredGoogleToken } from "@/services/googleAuth/tokenStorage";
 
 WebBrowser.maybeCompleteAuthSession();
@@ -40,30 +41,35 @@ export const GoogleLoginPanel = ({ onSignedIn }: GoogleLoginPanelProps) => {
     );
   }
 
+  if (Platform.OS === "web") {
+    return (
+      <GoogleLoginPanelWeb
+        onSignedIn={onSignedIn}
+        webClientId={webClientId ?? ""}
+      />
+    );
+  }
+
   return (
-    <GoogleLoginPanelReady
+    <GoogleLoginPanelNative
       iosClientId={iosClientId ?? undefined}
       onSignedIn={onSignedIn}
-      webClientId={webClientId ?? undefined}
     />
   );
 };
 
-type GoogleLoginPanelReadyProps = {
+type GoogleLoginPanelNativeProps = {
   iosClientId?: string;
-  webClientId?: string;
   onSignedIn: () => Promise<void>;
 };
 
-const GoogleLoginPanelReady = ({
+const GoogleLoginPanelNative = ({
   iosClientId,
-  webClientId,
   onSignedIn
-}: GoogleLoginPanelReadyProps) => {
+}: GoogleLoginPanelNativeProps) => {
   const [message, setMessage] = useState<string | null>(null);
   const [, response, promptAsync] = Google.useAuthRequest({
     iosClientId,
-    webClientId,
     scopes: [...GOOGLE_SCOPES],
     selectAccount: true
   });
@@ -96,6 +102,44 @@ const GoogleLoginPanelReady = ({
   );
 };
 
+type GoogleLoginPanelWebProps = {
+  webClientId: string;
+  onSignedIn: () => Promise<void>;
+};
+
+const GoogleLoginPanelWeb = ({ webClientId, onSignedIn }: GoogleLoginPanelWebProps) => {
+  const [message, setMessage] = useState<string | null>(null);
+  const [signingIn, setSigningIn] = useState(false);
+
+  const signIn = async (): Promise<void> => {
+    setSigningIn(true);
+    setMessage(null);
+    try {
+      await signInWithGoogleIdentityServices(webClientId);
+      setMessage("Googleにログインしました。");
+      await onSignedIn();
+    } catch (error: unknown) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSigningIn(false);
+    }
+  };
+
+  return (
+    <View style={styles.panel}>
+      <PrimaryButton
+        disabled={signingIn}
+        label={signingIn ? "ログイン中" : "Googleにログイン"}
+        onPress={() => void signIn()}
+      />
+      <Text style={styles.note}>
+        Web版はGoogle Identity Servicesのトークン方式を使うため、redirect_uriは送信しません。
+      </Text>
+      {message ? <Text style={styles.text}>{message}</Text> : null}
+    </View>
+  );
+};
+
 const styles = StyleSheet.create({
   panel: {
     backgroundColor: "#fff",
@@ -113,5 +157,10 @@ const styles = StyleSheet.create({
   text: {
     color: "#52606d",
     lineHeight: 20
+  },
+  note: {
+    color: "#5f6b76",
+    fontSize: 12,
+    lineHeight: 18
   }
 });
