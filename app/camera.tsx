@@ -94,7 +94,12 @@ function WebCameraScreen() {
   const [ready, setReady] = useState(false);
   const [taking, setTaking] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [debugLines, setDebugLines] = useState<string[]>([]);
   const settings = useAppStore((state) => state.settings);
+
+  const pushDebugLine = (line: string): void => {
+    setDebugLines((lines) => [...lines, `${new Date().toLocaleTimeString()} ${line}`].slice(-12));
+  };
 
   const stopCamera = (): void => {
     streamRef.current?.getTracks().forEach((track) => track.stop());
@@ -102,13 +107,25 @@ function WebCameraScreen() {
     setReady(false);
   };
 
-  const startCamera = async (): Promise<void> => {
+  const startCamera = async (debug = false): Promise<void> => {
     setErrorMessage(null);
+    if (debug) {
+      setDebugLines([]);
+      pushDebugLine(`href=${window.location.href}`);
+      pushDebugLine(`isSecureContext=${String(window.isSecureContext)}`);
+      pushDebugLine(`mediaDevices=${String(Boolean(navigator.mediaDevices))}`);
+      pushDebugLine(`getUserMedia=${String(Boolean(navigator.mediaDevices?.getUserMedia))}`);
+      pushDebugLine(`videoElement=${String(Boolean(videoRef.current))}`);
+    }
     try {
+      if (!window.isSecureContext) {
+        throw new Error("HTTPS環境ではありません。GitHub Pagesのhttps URLで開いてください。");
+      }
       if (!navigator.mediaDevices?.getUserMedia) {
         throw new Error("このブラウザではカメラを利用できません。");
       }
       stopCamera();
+      pushDebugLine("getUserMediaを呼び出します");
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: { ideal: "environment" },
@@ -117,14 +134,25 @@ function WebCameraScreen() {
         },
         audio: false
       });
+      pushDebugLine(`stream取得成功 tracks=${stream.getVideoTracks().length}`);
       streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
+        videoRef.current.playsInline = true;
+        videoRef.current.muted = true;
+        pushDebugLine("video.playを呼び出します");
         await videoRef.current.play();
+        pushDebugLine(
+          `video再生成功 size=${videoRef.current.videoWidth}x${videoRef.current.videoHeight}`
+        );
         setReady(true);
+      } else {
+        throw new Error("video要素が見つかりません。");
       }
     } catch (error: unknown) {
-      setErrorMessage(formatCameraError(error));
+      const message = formatCameraError(error);
+      pushDebugLine(`ERROR ${getErrorName(error)}: ${message}`);
+      setErrorMessage(`${getErrorName(error)}: ${message}`);
     }
   };
 
@@ -180,7 +208,17 @@ function WebCameraScreen() {
         <View style={styles.webErrorPanel}>
           <Text style={styles.permissionTitle}>カメラを起動できません</Text>
           <Text style={styles.permissionText}>{errorMessage}</Text>
-          <PrimaryButton label="もう一度許可する" onPress={() => void startCamera()} />
+          <PrimaryButton label="もう一度許可する" onPress={() => void startCamera(true)} />
+        </View>
+      ) : null}
+      {debugLines.length > 0 ? (
+        <View style={styles.debugPanel}>
+          <Text style={styles.debugTitle}>カメラ診断</Text>
+          {debugLines.map((line) => (
+            <Text key={line} style={styles.debugText}>
+              {line}
+            </Text>
+          ))}
         </View>
       ) : null}
       <View style={styles.bottomBar}>
@@ -193,6 +231,11 @@ function WebCameraScreen() {
           disabled={taking || !ready}
           label={taking ? "撮影中" : ready ? "撮影" : "準備中"}
           onPress={takePhoto}
+        />
+        <PrimaryButton
+          label="カメラ診断"
+          onPress={() => void startCamera(true)}
+          variant="secondary"
         />
       </View>
     </View>
@@ -226,6 +269,13 @@ const formatCameraError = (error: unknown): string => {
     return "他のアプリがカメラを使用中の可能性があります。";
   }
   return error.message;
+};
+
+const getErrorName = (error: unknown): string => {
+  if (error instanceof DOMException || error instanceof Error) {
+    return error.name || "CameraError";
+  }
+  return "CameraError";
 };
 
 const styles = StyleSheet.create({
@@ -291,5 +341,25 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     padding: 16,
     gap: 12
+  },
+  debugPanel: {
+    position: "absolute",
+    left: 16,
+    right: 16,
+    bottom: 150,
+    maxHeight: 220,
+    backgroundColor: "rgba(255, 255, 255, 0.94)",
+    borderRadius: 8,
+    padding: 12,
+    gap: 4
+  },
+  debugTitle: {
+    color: "#17212b",
+    fontWeight: "800"
+  },
+  debugText: {
+    color: "#25313d",
+    fontSize: 12,
+    lineHeight: 16
   }
 });
