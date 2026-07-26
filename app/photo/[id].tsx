@@ -1,0 +1,219 @@
+import { Image } from "react-native";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
+import { useCallback, useState } from "react";
+import { Alert, StyleSheet, Text, TextInput, View } from "react-native";
+import { InfoRow } from "@/components/InfoRow";
+import { PrimaryButton } from "@/components/PrimaryButton";
+import { Screen } from "@/components/Screen";
+import { LOCAL_FOLDER_OPTIONS } from "@/constants/defaults";
+import { createUniqueFileName, sanitizeFileName } from "@/domain/naming/photoFileName";
+import {
+  getPhotoById,
+  listCurrentFileNames,
+  markPhotoDeleted,
+  updatePhotoMetadata
+} from "@/repositories/photoRepository";
+import { deleteLocalPhotoFile } from "@/services/filesystem/photoFileSystem";
+import { useAppStore } from "@/store/appStore";
+import type { Photo } from "@/types/photo";
+
+export default function PhotoDetailScreen() {
+  const { id } = useLocalSearchParams<{ id?: string }>();
+  const refreshLocalPhotoCount = useAppStore((state) => state.refreshLocalPhotoCount);
+  const [photo, setPhoto] = useState<Photo | null>(null);
+  const [fileName, setFileName] = useState("");
+  const [folderName, setFolderName] = useState("");
+  const [memo, setMemo] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(async () => {
+    if (!id) {
+      return;
+    }
+    const nextPhoto = await getPhotoById(id);
+    setPhoto(nextPhoto);
+    setFileName(nextPhoto?.currentFileName ?? "");
+    setFolderName(nextPhoto?.targetFolderNameCache ?? "");
+    setMemo(nextPhoto?.memo ?? "");
+  }, [id]);
+
+  useFocusEffect(
+    useCallback(() => {
+      load().catch((error: unknown) => {
+        console.error("Failed to load photo", error);
+      });
+    }, [load])
+  );
+
+  const save = async (): Promise<void> => {
+    if (!photo) {
+      return;
+    }
+    setSaving(true);
+    try {
+      const otherNames = (await listCurrentFileNames()).filter(
+        (name) => name !== photo.currentFileName
+      );
+      const currentFileName = createUniqueFileName(sanitizeFileName(fileName), otherNames);
+      const nextFolderName = folderName.trim();
+      if (!nextFolderName) {
+        throw new Error("保存先フォルダを入力してください。");
+      }
+      await updatePhotoMetadata(photo.id, {
+        currentFileName,
+        targetFolderId: `local:${nextFolderName}`,
+        targetFolderNameCache: nextFolderName,
+        memo: memo.trim() ? memo.trim() : null
+      });
+      await load();
+      await refreshLocalPhotoCount();
+      Alert.alert("保存しました");
+    } catch (error: unknown) {
+      Alert.alert("保存できません", error instanceof Error ? error.message : String(error));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const remove = (): void => {
+    if (!photo) {
+      return;
+    }
+    Alert.alert("削除しますか", "ローカル写真とメタデータを削除扱いにします。", [
+      { text: "キャンセル", style: "cancel" },
+      {
+        text: "削除",
+        style: "destructive",
+        onPress: () => {
+          void (async () => {
+            try {
+              await markPhotoDeleted(photo.id);
+              await deleteLocalPhotoFile(photo.localUri);
+              await refreshLocalPhotoCount();
+              router.back();
+            } catch (error: unknown) {
+              Alert.alert("削除できません", error instanceof Error ? error.message : String(error));
+            }
+          })();
+        }
+      }
+    ]);
+  };
+
+  if (!photo) {
+    return (
+      <Screen>
+        <Text>写真が見つかりません。</Text>
+      </Screen>
+    );
+  }
+
+  return (
+    <Screen>
+      <Image source={{ uri: photo.localUri }} style={styles.preview} resizeMode="cover" />
+      <View style={styles.panel}>
+        <InfoRow label="撮影者" value={photo.photographerCode} />
+        <InfoRow label="撮影日時" value={new Date(photo.capturedAt).toLocaleString()} />
+        <InfoRow label="状態" value={formatUploadStatus(photo.uploadStatus)} />
+      </View>
+      <View style={styles.panel}>
+        <Text style={styles.label}>ファイル名</Text>
+        <TextInput onChangeText={setFileName} style={styles.input} value={fileName} />
+        <Text style={styles.label}>保存先フォルダ</Text>
+        <View style={styles.folderGrid}>
+          {LOCAL_FOLDER_OPTIONS.map((folder) => (
+            <Text
+              key={folder}
+              onPress={() => setFolderName(folder)}
+              style={[styles.folderChip, folderName === folder ? styles.folderChipSelected : null]}
+            >
+              {folder}
+            </Text>
+          ))}
+        </View>
+        <TextInput onChangeText={setFolderName} style={styles.input} value={folderName} />
+        <Text style={styles.label}>メモ</Text>
+        <TextInput
+          multiline
+          onChangeText={setMemo}
+          style={[styles.input, styles.memo]}
+          value={memo}
+        />
+      </View>
+      <PrimaryButton disabled={saving} label={saving ? "保存中" : "変更を保存"} onPress={() => void save()} />
+      <PrimaryButton label="削除" onPress={remove} variant="danger" />
+    </Screen>
+  );
+}
+
+const styles = StyleSheet.create({
+  preview: {
+    width: "100%",
+    aspectRatio: 4 / 3,
+    borderRadius: 8,
+    backgroundColor: "#d8dee5"
+  },
+  panel: {
+    backgroundColor: "#fff",
+    borderRadius: 8,
+    padding: 16,
+    gap: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "#d8dee5"
+  },
+  label: {
+    color: "#25313d",
+    fontWeight: "700"
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: "#c8d0d8",
+    borderRadius: 8,
+    minHeight: 46,
+    paddingHorizontal: 12,
+    backgroundColor: "#fff",
+    color: "#17212b"
+  },
+  memo: {
+    minHeight: 80,
+    paddingTop: 12,
+    textAlignVertical: "top"
+  },
+  folderGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8
+  },
+  folderChip: {
+    borderWidth: 1,
+    borderColor: "#b8c3ce",
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    color: "#25313d",
+    fontWeight: "700"
+  },
+  folderChipSelected: {
+    color: "#fff",
+    backgroundColor: "#1b5f8f",
+    borderColor: "#1b5f8f"
+  }
+});
+
+const formatUploadStatus = (status: Photo["uploadStatus"]): string => {
+  switch (status) {
+    case "local":
+    case "queued":
+      return "未同期";
+    case "uploading":
+      return "アップロード中";
+    case "uploaded":
+      return "同期済み";
+    case "failed":
+      return "エラー";
+    case "target_missing":
+      return "保存先不明";
+    case "deleted":
+      return "削除済み";
+  }
+};

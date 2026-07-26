@@ -1,0 +1,29 @@
+{
+  "expo": {
+    "name": "Lab Drive Camera",
+    "slug": "lab-drive-camera",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "labdrivecamera",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "jp.issl.labdrivecamera",
+      "infoPlist": {
+        "NSCameraUsageDescription": "実験写真をアプリ内で撮影するためにカメラを使用します。"
+      }
+    },
+    "android": {
+      "package": "jp.issl.labdrivecamera",
+      "permissions": ["CAMERA"]
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single"
+    },
+    "plugins": ["expo-router", "expo-camera", "expo-sqlite", "expo-secure-store"],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
