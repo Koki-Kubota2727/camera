@@ -10,6 +10,7 @@ import {
 } from "@/services/googleAuth/googleAuthConfig";
 import { signInWithGoogleIdentityServices } from "@/services/googleAuth/googleIdentityWeb";
 import { saveGoogleToken, toStoredGoogleToken } from "@/services/googleAuth/tokenStorage";
+import { formatDebugError } from "@/utils/debugError";
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -90,7 +91,7 @@ const GoogleLoginPanelNative = ({
       setMessage("Googleにログインしました。");
       await onSignedIn();
     })().catch((error: unknown) => {
-      setMessage(error instanceof Error ? error.message : String(error));
+      setMessage(formatDebugError("native google sign-in after response", error));
     });
   }, [onSignedIn, response]);
 
@@ -119,7 +120,7 @@ const GoogleLoginPanelWeb = ({ webClientId, onSignedIn }: GoogleLoginPanelWebPro
       setMessage("Googleにログインしました。");
       await onSignedIn();
     } catch (error: unknown) {
-      setMessage(error instanceof Error ? error.message : String(error));
+      setMessage(formatDebugError("web google sign-in button", error));
     } finally {
       setSigningIn(false);
     }
@@ -135,7 +136,7 @@ const GoogleLoginPanelWeb = ({ webClientId, onSignedIn }: GoogleLoginPanelWebPro
       <Text style={styles.note}>
         Web版はGoogle Identity Servicesのトークン方式を使うため、redirect_uriは送信しません。
       </Text>
-      {message ? <Text style={styles.text}>{message}</Text> : null}
+      {message ? <Text selectable style={styles.debugMessage}>{message}</Text> : null}
     </View>
   );
 };
@@ -162,5 +163,13 @@ const styles = StyleSheet.create({
     color: "#5f6b76",
     fontSize: 12,
     lineHeight: 18
+  },
+  debugMessage: {
+    backgroundColor: "#300",
+    color: "#fff",
+    fontFamily: Platform.select({ web: "monospace", default: undefined }),
+    fontSize: 12,
+    lineHeight: 16,
+    padding: 10
   }
 });

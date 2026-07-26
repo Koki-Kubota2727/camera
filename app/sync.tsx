@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Alert, StyleSheet, Text, View } from "react-native";
+import { StyleSheet, Text, View } from "react-native";
 import { GoogleLoginPanel } from "@/components/GoogleLoginPanel";
 import { InfoRow } from "@/components/InfoRow";
 import { PrimaryButton } from "@/components/PrimaryButton";
@@ -11,13 +11,14 @@ import {
   listUploadablePhotos,
   markPhotoUploaded,
   markPhotoUploadFailed,
+  markPhotoTargetMissing,
   markPhotoUploading
 } from "@/repositories/photoRepository";
 import { useAppStore } from "@/store/appStore";
 import type { GoogleAuthState } from "@/types/auth";
+import { formatDebugError } from "@/utils/debugError";
 
 export default function SyncScreen() {
-  const settings = useAppStore((state) => state.settings);
   const refreshLocalPhotoCount = useAppStore((state) => state.refreshLocalPhotoCount);
   const hasAnyClientId = Boolean(getGoogleIosClientId() || getGoogleWebClientId());
   const [authState, setAuthState] = useState<GoogleAuthState>(
@@ -36,7 +37,7 @@ export default function SyncScreen() {
 
   useEffect(() => {
     refresh().catch((error: unknown) => {
-      setMessage(error instanceof Error ? error.message : String(error));
+      setMessage(formatDebugError("sync screen refresh", error));
     });
   }, [refresh]);
 
@@ -47,20 +48,25 @@ export default function SyncScreen() {
   };
 
   const uploadAll = async (): Promise<void> => {
-    if (!settings?.driveFolderId) {
-      Alert.alert("DriveフォルダIDが未設定です", "設定画面でGoogle DriveフォルダIDを入力してください。");
-      return;
-    }
     setSyncing(true);
     setMessage(null);
     let uploaded = 0;
     let failed = 0;
+    let lastErrorMessage: string | null = null;
     try {
       const photos = await listUploadablePhotos();
       for (const photo of photos) {
         try {
+          if (!photo.driveFolderId) {
+            await markPhotoTargetMissing(photo.id);
+            failed += 1;
+            setSummary({ pending: photos.length - uploaded - failed, uploaded, failed });
+            lastErrorMessage = `保存先未指定: ${photo.currentFileName}\n写真詳細でDrive保存先を選んでから再同期してください。`;
+            setMessage(lastErrorMessage);
+            continue;
+          }
           await markPhotoUploading(photo.id);
-          const result = await uploadPhotoToDrive(photo, settings.driveFolderId);
+          const result = await uploadPhotoToDrive(photo, photo.driveFolderId);
           await markPhotoUploaded(photo.id, result.driveFileId);
           uploaded += 1;
           setSummary({ pending: photos.length - uploaded - failed, uploaded, failed });
@@ -68,16 +74,21 @@ export default function SyncScreen() {
           await markPhotoUploadFailed(photo.id);
           failed += 1;
           setSummary({ pending: photos.length - uploaded - failed, uploaded, failed });
-          const messageText = error instanceof Error ? error.message : String(error);
+          const messageText = formatDebugError(`upload photo ${photo.id}`, error);
+          lastErrorMessage = messageText;
+          setMessage(messageText);
           if (messageText.includes("再ログイン")) {
-            setMessage(messageText);
             break;
           }
         }
       }
       await refreshLocalPhotoCount();
       await refresh();
-      setMessage(`アップロード完了: 成功 ${uploaded}件 / 失敗 ${failed}件`);
+      setMessage(
+        lastErrorMessage
+          ? `アップロード完了: 成功 ${uploaded}件 / 失敗 ${failed}件\n\n${lastErrorMessage}`
+          : `アップロード完了: 成功 ${uploaded}件 / 失敗 ${failed}件`
+      );
     } finally {
       setSyncing(false);
     }
@@ -87,13 +98,13 @@ export default function SyncScreen() {
     <Screen>
       <View style={styles.panel}>
         <InfoRow label="Google認証" value={formatAuthState(authState)} />
-        <InfoRow label="Drive保存先" value={settings?.driveFolderName ?? "未設定"} />
+        <InfoRow label="Drive保存先" value="写真ごとの指定" />
         <InfoRow label="未同期件数" value={`${summary.pending}件`} />
         <InfoRow label="成功" value={`${summary.uploaded}件`} />
         <InfoRow label="失敗" value={`${summary.failed}件`} />
       </View>
 
-      {message ? <Text style={styles.message}>{message}</Text> : null}
+      {message ? <Text selectable style={styles.message}>{message}</Text> : null}
 
       {authState.status === "signed_in" ? null : <GoogleLoginPanel onSignedIn={refresh} />}
       <PrimaryButton
@@ -129,8 +140,12 @@ const styles = StyleSheet.create({
     borderColor: "#d8dee5"
   },
   message: {
-    color: "#25313d",
+    backgroundColor: "#300",
+    color: "#fff",
+    fontFamily: "monospace",
+    fontSize: 12,
     fontWeight: "700",
-    lineHeight: 20
+    lineHeight: 16,
+    padding: 10
   }
 });

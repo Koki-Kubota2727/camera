@@ -1,14 +1,15 @@
-import { router, useFocusEffect } from "expo-router";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useCallback, useState } from "react";
-import { ActivityIndicator, Alert, FlatList, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Alert, FlatList, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { GoogleLoginPanel } from "@/components/GoogleLoginPanel";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { Screen } from "@/components/Screen";
 import { getGoogleIosClientId, getGoogleWebClientId } from "@/services/googleAuth/googleAuthConfig";
 import { getGoogleAuthState } from "@/services/googleAuth/tokenStorage";
-import { listDriveFolders } from "@/services/googleDrive/driveApi";
+import { createDriveFolder, listDriveFolders } from "@/services/googleDrive/driveApi";
 import { useAppStore } from "@/store/appStore";
 import type { GoogleAuthState } from "@/types/auth";
+import { formatDebugError } from "@/utils/debugError";
 
 type Folder = {
   id: string;
@@ -25,14 +26,25 @@ type Breadcrumb = {
   name: string;
 };
 
+type PickerMode = "parent" | "target";
+
 export default function DriveFolderPickerScreen() {
+  const params = useLocalSearchParams<{ mode?: string }>();
   const { settings, updateSettings } = useAppStore();
-  const [current, setCurrent] = useState<Breadcrumb>({ id: null, name: "マイドライブ" });
-  const [breadcrumbs, setBreadcrumbs] = useState<Breadcrumb[]>([
-    { id: null, name: "マイドライブ" }
-  ]);
+  const pickerMode: PickerMode = params.mode === "parent" ? "parent" : "target";
+  const initialFolder =
+    pickerMode === "target" && settings?.driveParentFolderId
+      ? {
+          id: settings.driveParentFolderId,
+          name: settings.driveParentFolderName ?? "親フォルダ"
+        }
+      : { id: null, name: "マイドライブ" };
+  const [current, setCurrent] = useState<Breadcrumb>(initialFolder);
+  const [breadcrumbs, setBreadcrumbs] = useState<Breadcrumb[]>([initialFolder]);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [loading, setLoading] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const hasAnyClientId = Boolean(getGoogleIosClientId() || getGoogleWebClientId());
   const [authState, setAuthState] = useState<GoogleAuthState>(
@@ -55,9 +67,8 @@ export default function DriveFolderPickerScreen() {
         setMessage("この中に表示できる子フォルダはありません。");
       }
     } catch (error: unknown) {
-      const text = error instanceof Error ? error.message : String(error);
       setMessage(
-        `${text}\n\ndrive.fileスコープでは、アプリに許可されていない既存フォルダが表示できない場合があります。`
+        `${formatDebugError("drive folder list", error)}\n\ndrive.fileスコープでは、アプリに許可されていない既存フォルダが表示できない場合があります。`
       );
     } finally {
       setLoading(false);
@@ -72,7 +83,7 @@ export default function DriveFolderPickerScreen() {
           await load(current);
         }
       })().catch((error: unknown) => {
-        setMessage(error instanceof Error ? error.message : String(error));
+        setMessage(formatDebugError("drive folder picker focus", error));
       });
     }, [current, load, refreshAuth])
   );
@@ -96,18 +107,62 @@ export default function DriveFolderPickerScreen() {
 
   const selectCurrentFolder = async (): Promise<void> => {
     if (!current.id) {
-      Alert.alert("保存先を選べません", "マイドライブ直下は選択せず、保存用フォルダを開いてから選択してください。");
+      Alert.alert(
+        "フォルダを選べません",
+        "マイドライブ直下は選択せず、対象のフォルダを開いてから選択してください。"
+      );
       return;
     }
     if (!settings) {
       return;
     }
-    await updateSettings({
-      ...settings,
-      driveFolderId: current.id,
-      driveFolderName: current.name
-    });
+    if (pickerMode === "parent") {
+      await updateSettings({
+        ...settings,
+        driveParentFolderId: current.id,
+        driveParentFolderName: current.name,
+        driveFolderId: null,
+        driveFolderName: null
+      });
+    } else {
+      await updateSettings({
+        ...settings,
+        driveFolderId: current.id,
+        driveFolderName: current.name
+      });
+    }
     router.back();
+  };
+
+  const createFolderAndSelect = async (): Promise<void> => {
+    if (pickerMode !== "target") {
+      return;
+    }
+    if (!current.id) {
+      Alert.alert("フォルダを作成できません", "親フォルダを開いてから作成してください。");
+      return;
+    }
+    if (!settings) {
+      return;
+    }
+
+    setCreating(true);
+    setMessage(null);
+    try {
+      const created = await createDriveFolder(current.id, newFolderName);
+      setFolders((items) => [created, ...items]);
+      setNewFolderName("");
+      await updateSettings({
+        ...settings,
+        driveFolderId: created.id,
+        driveFolderName: created.name
+      });
+      router.back();
+    } catch (error: unknown) {
+      setMessage(formatDebugError("drive folder create", error));
+    } finally {
+      setCreating(false);
+    }
   };
 
   return (
@@ -119,7 +174,7 @@ export default function DriveFolderPickerScreen() {
         </Text>
         <View style={styles.actions}>
           <PrimaryButton label="上へ" onPress={goUp} variant="secondary" disabled={breadcrumbs.length <= 1} />
-          <PrimaryButton label="ここを保存先にする" onPress={() => void selectCurrentFolder()} />
+          <PrimaryButton label={pickerMode === "parent" ? "ここを親フォルダにする" : "ここを保存先にする"} onPress={() => void selectCurrentFolder()} />
         </View>
       </View>
 
@@ -134,7 +189,28 @@ export default function DriveFolderPickerScreen() {
         </View>
       )}
 
-      {message ? <Text style={styles.message}>{message}</Text> : null}
+      {pickerMode === "target" && settings?.driveParentFolderName ? (
+        <Text style={styles.hint}>
+          {settings.driveParentFolderName} の子フォルダを保存先候補として表示しています。
+        </Text>
+      ) : null}
+      {pickerMode === "target" && authState.status === "signed_in" ? (
+        <View style={styles.createPanel}>
+          <Text style={styles.label}>新しい子フォルダ</Text>
+          <TextInput
+            onChangeText={setNewFolderName}
+            placeholder="例: A班_202607"
+            style={styles.input}
+            value={newFolderName}
+          />
+          <PrimaryButton
+            disabled={creating || !newFolderName.trim()}
+            label={creating ? "作成中" : "作成して保存先にする"}
+            onPress={() => void createFolderAndSelect()}
+          />
+        </View>
+      ) : null}
+      {message ? <Text selectable style={styles.message}>{message}</Text> : null}
       {loading ? <ActivityIndicator style={styles.loading} /> : null}
 
       <FlatList
@@ -182,10 +258,37 @@ const styles = StyleSheet.create({
   loginBlock: {
     padding: 16
   },
-  message: {
-    color: "#7a4d00",
+  hint: {
+    color: "#25313d",
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    fontSize: 13,
+    fontWeight: "700"
+  },
+  createPanel: {
+    backgroundColor: "#fff",
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderColor: "#d8dee5",
     padding: 16,
-    lineHeight: 20,
+    gap: 10
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: "#c8d0d8",
+    borderRadius: 8,
+    minHeight: 46,
+    paddingHorizontal: 12,
+    backgroundColor: "#fff",
+    color: "#17212b",
+    fontSize: 16
+  },
+  message: {
+    backgroundColor: "#300",
+    color: "#fff",
+    fontFamily: "monospace",
+    padding: 16,
+    lineHeight: 16,
+    fontSize: 12,
     fontWeight: "700"
   },
   loading: {

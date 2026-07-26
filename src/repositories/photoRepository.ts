@@ -11,6 +11,8 @@ type PhotoRow = {
   thumbnail_uri: string | null;
   target_folder_id: string;
   target_folder_name_cache: string;
+  drive_folder_id: string | null;
+  drive_folder_name: string | null;
   drive_id: string | null;
   photographer_code: string;
   captured_at: string;
@@ -39,6 +41,8 @@ export const insertPhoto = async (input: NewPhotoInput): Promise<void> => {
         thumbnailUri: null,
         targetFolderId: input.targetFolderId,
         targetFolderNameCache: input.targetFolderNameCache,
+        driveFolderId: input.driveFolderId,
+        driveFolderName: input.driveFolderName,
         driveId: null,
         photographerCode: input.photographerCode,
         capturedAt: input.capturedAt,
@@ -62,16 +66,18 @@ export const insertPhoto = async (input: NewPhotoInput): Promise<void> => {
   await db.runAsync(
     `INSERT INTO photos (
       id, local_uri, thumbnail_uri, target_folder_id, target_folder_name_cache,
-      drive_id, photographer_code, captured_at, default_file_name, current_file_name,
+      drive_folder_id, drive_folder_name, drive_id, photographer_code, captured_at, default_file_name, current_file_name,
       memo, mime_type, file_size, sha256, upload_status, drive_file_id, uploaded_at,
       created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       input.id,
       input.localUri,
       null,
       input.targetFolderId,
       input.targetFolderNameCache,
+      input.driveFolderId,
+      input.driveFolderName,
       null,
       input.photographerCode,
       input.capturedAt,
@@ -153,12 +159,14 @@ export const updatePhotoMetadata = async (
     currentFileName: string;
     targetFolderId: string;
     targetFolderNameCache: string;
+    driveFolderId: string | null;
+    driveFolderName: string | null;
     memo: string | null;
   }
 ): Promise<void> => {
   if (Platform.OS === "web") {
     await updateWebPhoto(id, (photo) => {
-      if (!["local", "queued", "failed"].includes(photo.uploadStatus)) {
+      if (!["local", "queued", "failed", "target_missing"].includes(photo.uploadStatus)) {
         return photo;
       }
       return {
@@ -166,7 +174,10 @@ export const updatePhotoMetadata = async (
         currentFileName: fields.currentFileName,
         targetFolderId: fields.targetFolderId,
         targetFolderNameCache: fields.targetFolderNameCache,
+        driveFolderId: fields.driveFolderId,
+        driveFolderName: fields.driveFolderName,
         memo: fields.memo,
+        uploadStatus: photo.uploadStatus === "target_missing" ? "local" : photo.uploadStatus,
         updatedAt: new Date().toISOString()
       };
     });
@@ -178,17 +189,38 @@ export const updatePhotoMetadata = async (
        SET current_file_name = ?,
            target_folder_id = ?,
            target_folder_name_cache = ?,
+           drive_folder_id = ?,
+           drive_folder_name = ?,
+           upload_status = CASE WHEN upload_status = 'target_missing' THEN 'local' ELSE upload_status END,
            memo = ?,
            updated_at = ?
-     WHERE id = ? AND upload_status IN ('local', 'queued', 'failed')`,
+     WHERE id = ? AND upload_status IN ('local', 'queued', 'failed', 'target_missing')`,
     [
       fields.currentFileName,
       fields.targetFolderId,
       fields.targetFolderNameCache,
+      fields.driveFolderId,
+      fields.driveFolderName,
       fields.memo,
       new Date().toISOString(),
       id
     ]
+  );
+};
+
+export const markPhotoTargetMissing = async (id: string): Promise<void> => {
+  if (Platform.OS === "web") {
+    await updateWebPhoto(id, (photo) => ({
+      ...photo,
+      uploadStatus: "target_missing",
+      updatedAt: new Date().toISOString()
+    }));
+    return;
+  }
+  const db = await getDatabase();
+  await db.runAsync(
+    "UPDATE photos SET upload_status = 'target_missing', updated_at = ? WHERE id = ?",
+    [new Date().toISOString(), id]
   );
 };
 
@@ -284,6 +316,8 @@ const mapPhotoRow = (row: PhotoRow): Photo => ({
   thumbnailUri: row.thumbnail_uri,
   targetFolderId: row.target_folder_id,
   targetFolderNameCache: row.target_folder_name_cache,
+  driveFolderId: row.drive_folder_id,
+  driveFolderName: row.drive_folder_name,
   driveId: row.drive_id,
   photographerCode: row.photographer_code,
   capturedAt: row.captured_at,
@@ -309,7 +343,7 @@ const loadWebPhotos = async (): Promise<Photo[]> => {
   if (!Array.isArray(parsed)) {
     return [];
   }
-  return parsed.filter(isPhoto);
+  return parsed.filter(isPhotoLike).map(normalizeWebPhoto);
 };
 
 const saveWebPhotos = async (photos: readonly Photo[]): Promise<void> => {
@@ -324,7 +358,10 @@ const updateWebPhoto = async (
   await saveWebPhotos(photos.map((photo) => (photo.id === id ? updater(photo) : photo)));
 };
 
-const isPhoto = (value: unknown): value is Photo => {
+const isPhotoLike = (value: unknown): value is Omit<Photo, "driveFolderId" | "driveFolderName"> & {
+  driveFolderId?: unknown;
+  driveFolderName?: unknown;
+} => {
   if (!isRecord(value)) {
     return false;
   }
@@ -343,6 +380,17 @@ const isPhoto = (value: unknown): value is Photo => {
     typeof value.updatedAt === "string"
   );
 };
+
+const normalizeWebPhoto = (
+  value: Omit<Photo, "driveFolderId" | "driveFolderName"> & {
+    driveFolderId?: unknown;
+    driveFolderName?: unknown;
+  }
+): Photo => ({
+  ...value,
+  driveFolderId: typeof value.driveFolderId === "string" ? value.driveFolderId : null,
+  driveFolderName: typeof value.driveFolderName === "string" ? value.driveFolderName : null
+});
 
 const isUploadStatus = (value: unknown): value is UploadStatus =>
   value === "local" ||

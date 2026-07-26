@@ -41,7 +41,7 @@ export default function RootLayout() {
         }}
       >
         <Stack.Screen name="index" options={{ title: "Lab Drive Camera" }} />
-        <Stack.Screen name="camera" options={{ title: "撮影" }} />
+        <Stack.Screen name="shoot" options={{ title: "撮影" }} />
         <Stack.Screen name="photo-review" options={{ title: "撮影後確認" }} />
         <Stack.Screen name="photos" options={{ title: "写真一覧" }} />
         <Stack.Screen name="photo/[id]" options={{ title: "写真詳細" }} />

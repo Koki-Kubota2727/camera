@@ -19,6 +19,12 @@ export const saveSettings = async (settings: AppSettings): Promise<void> => {
     photographerCode: validatePhotographerCode(settings.photographerCode),
     targetFolderId: settings.targetFolderId.trim(),
     targetFolderName: settings.targetFolderName.trim(),
+    driveParentFolderId: settings.driveParentFolderId?.trim()
+      ? settings.driveParentFolderId.trim()
+      : null,
+    driveParentFolderName: settings.driveParentFolderName?.trim()
+      ? settings.driveParentFolderName.trim()
+      : null,
     driveFolderId: settings.driveFolderId?.trim() ? settings.driveFolderId.trim() : null,
     driveFolderName: settings.driveFolderName?.trim() ? settings.driveFolderName.trim() : null
   };
@@ -32,6 +38,8 @@ const defaultSettings = (): AppSettings => ({
   photographerCode: DEFAULT_PHOTOGRAPHER_CODE,
   targetFolderId: `local:${DEFAULT_TARGET_FOLDER}`,
   targetFolderName: DEFAULT_TARGET_FOLDER,
+  driveParentFolderId: null,
+  driveParentFolderName: null,
   driveFolderId: null,
   driveFolderName: null
 });
@@ -60,7 +68,23 @@ const parseSettings = (value: unknown): AppSettings => {
     typeof value.driveFolderName === "string" && value.driveFolderName.trim()
       ? value.driveFolderName.trim()
       : null;
-  return { photographerCode, targetFolderId, targetFolderName, driveFolderId, driveFolderName };
+  const driveParentFolderId =
+    typeof value.driveParentFolderId === "string" && value.driveParentFolderId.trim()
+      ? value.driveParentFolderId.trim()
+      : null;
+  const driveParentFolderName =
+    typeof value.driveParentFolderName === "string" && value.driveParentFolderName.trim()
+      ? value.driveParentFolderName.trim()
+      : null;
+  return {
+    photographerCode,
+    targetFolderId,
+    targetFolderName,
+    driveParentFolderId,
+    driveParentFolderName,
+    driveFolderId,
+    driveFolderName
+  };
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>

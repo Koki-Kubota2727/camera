@@ -13,6 +13,8 @@ export type Photo = {
   thumbnailUri: string | null;
   targetFolderId: string;
   targetFolderNameCache: string;
+  driveFolderId: string | null;
+  driveFolderName: string | null;
   driveId: string | null;
   photographerCode: string;
   capturedAt: string;
@@ -34,6 +36,8 @@ export type NewPhotoInput = {
   localUri: string;
   targetFolderId: string;
   targetFolderNameCache: string;
+  driveFolderId: string | null;
+  driveFolderName: string | null;
   photographerCode: string;
   capturedAt: string;
   defaultFileName: string;

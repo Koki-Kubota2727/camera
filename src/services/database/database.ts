@@ -48,6 +48,8 @@ export const initializeDatabase = async (): Promise<void> => {
       thumbnail_uri TEXT,
       target_folder_id TEXT NOT NULL,
       target_folder_name_cache TEXT NOT NULL,
+      drive_folder_id TEXT,
+      drive_folder_name TEXT,
       drive_id TEXT,
       photographer_code TEXT NOT NULL,
       captured_at TEXT NOT NULL,
@@ -76,4 +78,19 @@ export const initializeDatabase = async (): Promise<void> => {
       updated_at TEXT NOT NULL
     );
   `);
+  await addColumnIfMissing(db, "photos", "drive_folder_id", "TEXT");
+  await addColumnIfMissing(db, "photos", "drive_folder_name", "TEXT");
+};
+
+const addColumnIfMissing = async (
+  db: SQLite.SQLiteDatabase,
+  tableName: string,
+  columnName: string,
+  definition: string
+): Promise<void> => {
+  const columns = await db.getAllAsync<{ name: string }>(`PRAGMA table_info(${tableName})`);
+  if (columns.some((column) => column.name === columnName)) {
+    return;
+  }
+  await db.execAsync(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
 };

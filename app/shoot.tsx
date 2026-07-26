@@ -1,10 +1,11 @@
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { router } from "expo-router";
-import { useEffect, useRef, useState } from "react";
+import { createElement, useEffect, useRef, useState } from "react";
 import { Alert, Platform, StyleSheet, Text, View } from "react-native";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { Screen } from "@/components/Screen";
 import { useAppStore } from "@/store/appStore";
+import { formatDebugError } from "@/utils/debugError";
 
 type CameraRef = React.ElementRef<typeof CameraView>;
 
@@ -90,6 +91,7 @@ function NativeCameraScreen() {
 
 function WebCameraScreen() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const [ready, setReady] = useState(false);
   const [taking, setTaking] = useState(false);
@@ -98,7 +100,7 @@ function WebCameraScreen() {
   const settings = useAppStore((state) => state.settings);
 
   const pushDebugLine = (line: string): void => {
-    setDebugLines((lines) => [...lines, `${new Date().toLocaleTimeString()} ${line}`].slice(-12));
+    setDebugLines((lines) => [...lines, `${new Date().toLocaleTimeString()} ${line}`].slice(-20));
   };
 
   const stopCamera = (): void => {
@@ -112,10 +114,12 @@ function WebCameraScreen() {
     if (debug) {
       setDebugLines([]);
       pushDebugLine(`href=${window.location.href}`);
+      pushDebugLine(`protocol=${window.location.protocol}`);
       pushDebugLine(`isSecureContext=${String(window.isSecureContext)}`);
       pushDebugLine(`mediaDevices=${String(Boolean(navigator.mediaDevices))}`);
       pushDebugLine(`getUserMedia=${String(Boolean(navigator.mediaDevices?.getUserMedia))}`);
       pushDebugLine(`videoElement=${String(Boolean(videoRef.current))}`);
+      pushDebugLine(`cameraPermission=${await getCameraPermissionState()}`);
     }
     try {
       if (!window.isSecureContext) {
@@ -126,14 +130,7 @@ function WebCameraScreen() {
       }
       stopCamera();
       pushDebugLine("getUserMediaを呼び出します");
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: { ideal: "environment" },
-          width: { ideal: 1920 },
-          height: { ideal: 1080 }
-        },
-        audio: false
-      });
+      const stream = await requestCameraStream(pushDebugLine);
       pushDebugLine(`stream取得成功 tracks=${stream.getVideoTracks().length}`);
       streamRef.current = stream;
       if (videoRef.current) {
@@ -183,20 +180,52 @@ function WebCameraScreen() {
       stopCamera();
       router.push({ pathname: "/photo-review", params: { uri: `web-temp:${photoKey}` } });
     } catch (error: unknown) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
+      const message = formatDebugError("web camera canvas capture", error);
+      pushDebugLine(message);
+      setErrorMessage(message);
     } finally {
       setTaking(false);
     }
   };
 
-  useEffect(() => {
-    void startCamera();
-    return stopCamera;
-  }, []);
+  const openFileCapture = (): void => {
+    pushDebugLine("file input captureを開きます");
+    fileInputRef.current?.click();
+  };
+
+  const handleFileCapture = async (file: File | null): Promise<void> => {
+    if (!file) {
+      pushDebugLine("file input captureはキャンセルされました");
+      return;
+    }
+    setTaking(true);
+    setErrorMessage(null);
+    try {
+      pushDebugLine(`file取得成功 name=${file.name} type=${file.type} size=${file.size}`);
+      const dataUrl = await readFileAsDataUrl(file);
+      const photoKey = `web-photo-${Date.now()}`;
+      sessionStorage.setItem(photoKey, dataUrl);
+      stopCamera();
+      router.push({ pathname: "/photo-review", params: { uri: `web-temp:${photoKey}` } });
+    } catch (error: unknown) {
+      const message = formatDebugError("web file capture", error);
+      pushDebugLine(message);
+      setErrorMessage(message);
+    } finally {
+      setTaking(false);
+    }
+  };
+
+  useEffect(() => stopCamera, []);
 
   return (
     <View style={styles.root}>
       {createVideoElement(videoRef)}
+      {createFileInputElement(fileInputRef, (event) => {
+        const file = event.currentTarget.files?.[0] ?? null;
+        event.currentTarget.value = "";
+        void handleFileCapture(file);
+      })}
       <View style={styles.topBar}>
         <Text style={styles.metaLabel}>保存先</Text>
         <Text numberOfLines={1} style={styles.metaValue}>
@@ -208,7 +237,7 @@ function WebCameraScreen() {
         <View style={styles.webErrorPanel}>
           <Text style={styles.permissionTitle}>カメラを起動できません</Text>
           <Text style={styles.permissionText}>{errorMessage}</Text>
-          <PrimaryButton label="もう一度許可する" onPress={() => void startCamera(true)} />
+          <PrimaryButton label="カメラを起動する" onPress={() => void startCamera(true)} />
         </View>
       ) : null}
       {debugLines.length > 0 ? (
@@ -228,13 +257,20 @@ function WebCameraScreen() {
           variant="secondary"
         />
         <PrimaryButton
+          disabled={taking}
+          label={ready ? "カメラ再起動" : "カメラ起動"}
+          onPress={() => void startCamera(true)}
+          variant="secondary"
+        />
+        <PrimaryButton
           disabled={taking || !ready}
           label={taking ? "撮影中" : ready ? "撮影" : "準備中"}
           onPress={takePhoto}
         />
         <PrimaryButton
-          label="カメラ診断"
-          onPress={() => void startCamera(true)}
+          disabled={taking}
+          label="写真を選択/撮影"
+          onPress={openFileCapture}
           variant="secondary"
         />
       </View>
@@ -248,12 +284,79 @@ const createVideoElement = (ref: React.RefObject<HTMLVideoElement | null>) =>
   // eslint-disable-next-line react/no-unknown-property
   <video ref={ref} autoPlay playsInline muted style={webVideoStyle} />;
 
+const createFileInputElement = (
+  ref: React.RefObject<HTMLInputElement | null>,
+  onChange: (event: { currentTarget: HTMLInputElement }) => void
+) =>
+  createElement("input", {
+    accept: "image/*",
+    capture: "environment",
+    onChange,
+    ref,
+    style: fileInputStyle,
+    type: "file"
+  });
+
 const webVideoStyle = {
   width: "100%",
   height: "100%",
   objectFit: "cover",
   backgroundColor: "#000"
 } as const;
+
+const fileInputStyle = {
+  backgroundColor: "#fff",
+  borderRadius: 8,
+  color: "#000",
+  padding: 10,
+  width: "100%"
+} as const;
+
+const readFileAsDataUrl = async (file: File): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        resolve(reader.result);
+        return;
+      }
+      reject(new Error("写真ファイルをdata URLとして読み込めませんでした。"));
+    };
+    reader.onerror = () => reject(reader.error ?? new Error("写真ファイルの読み込みに失敗しました。"));
+    reader.readAsDataURL(file);
+  });
+
+const requestCameraStream = async (
+  pushDebugLine: (line: string) => void
+): Promise<MediaStream> => {
+  try {
+    pushDebugLine("背面カメラ優先の制約で試します");
+    return await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: { ideal: "environment" },
+        width: { ideal: 1920 },
+        height: { ideal: 1080 }
+      },
+      audio: false
+    });
+  } catch (error: unknown) {
+    pushDebugLine(`背面カメラ優先で失敗: ${getErrorName(error)} ${formatCameraError(error)}`);
+    pushDebugLine("video=trueで再試行します");
+    return navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+  }
+};
+
+const getCameraPermissionState = async (): Promise<string> => {
+  if (!navigator.permissions?.query) {
+    return "permissions API unavailable";
+  }
+  try {
+    const status = await navigator.permissions.query({ name: "camera" as PermissionName });
+    return status.state;
+  } catch (error: unknown) {
+    return `permission query failed: ${getErrorName(error)}`;
+  }
+};
 
 const formatCameraError = (error: unknown): string => {
   if (!(error instanceof DOMException)) {

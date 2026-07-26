@@ -1,7 +1,7 @@
 import { router, useLocalSearchParams } from "expo-router";
 import { randomUUID } from "expo-crypto";
-import { useMemo, useState } from "react";
-import { Alert, Image, StyleSheet, Text, TextInput, View } from "react-native";
+import { useEffect, useMemo, useState } from "react";
+import { Alert, Image, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { InfoRow } from "@/components/InfoRow";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { Screen } from "@/components/Screen";
@@ -12,7 +12,14 @@ import {
 } from "@/domain/naming/photoFileName";
 import { listCurrentFileNames, insertPhoto } from "@/repositories/photoRepository";
 import { persistCapturedPhoto } from "@/services/filesystem/photoFileSystem";
+import { listDriveFolders } from "@/services/googleDrive/driveApi";
 import { useAppStore } from "@/store/appStore";
+import { formatDebugError } from "@/utils/debugError";
+
+type DriveFolderCandidate = {
+  id: string;
+  name: string;
+};
 
 export default function PhotoReviewScreen() {
   const { uri } = useLocalSearchParams<{ uri?: string }>();
@@ -32,8 +39,33 @@ export default function PhotoReviewScreen() {
   }, [capturedAt, settings]);
   const [fileName, setFileName] = useState(defaultName);
   const [memo, setMemo] = useState("");
+  const [driveFolderId, setDriveFolderId] = useState<string | null>(
+    settings?.driveFolderId ?? null
+  );
+  const [driveFolderName, setDriveFolderName] = useState<string | null>(
+    settings?.driveFolderName ?? null
+  );
+  const [driveFolderCandidates, setDriveFolderCandidates] = useState<DriveFolderCandidate[]>([]);
   const [saving, setSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!settings?.driveParentFolderId) {
+      return;
+    }
+    listDriveFolders(settings.driveParentFolderId)
+      .then((folders) => {
+        setDriveFolderCandidates(folders.map((folder) => ({ id: folder.id, name: folder.name })));
+      })
+      .catch((error: unknown) => {
+        setErrorMessage(formatDebugError("photo review drive folder candidates", error));
+      });
+  }, [settings?.driveParentFolderId]);
+
+  const selectDriveFolder = (folder: DriveFolderCandidate): void => {
+    setDriveFolderId(folder.id);
+    setDriveFolderName(folder.name);
+  };
 
   const save = async (): Promise<void> => {
     if (!imageUri || !settings) {
@@ -52,6 +84,8 @@ export default function PhotoReviewScreen() {
         localUri: persisted.localUri,
         targetFolderId: settings.targetFolderId,
         targetFolderNameCache: settings.targetFolderName,
+        driveFolderId,
+        driveFolderName,
         photographerCode: settings.photographerCode,
         capturedAt: capturedAt.toISOString(),
         defaultFileName: defaultName,
@@ -83,8 +117,36 @@ export default function PhotoReviewScreen() {
       <Image source={{ uri: imageUri }} style={styles.preview} resizeMode="cover" />
       <View style={styles.panel}>
         <InfoRow label="保存先" value={settings?.targetFolderName ?? "-"} />
+        <InfoRow label="Drive保存先" value={driveFolderName ?? "未指定"} />
         <InfoRow label="撮影者" value={settings?.photographerCode ?? "-"} />
         <InfoRow label="撮影日時" value={capturedAt.toLocaleString()} />
+      </View>
+      <View style={styles.panel}>
+        <Text style={styles.label}>写真ごとのDrive保存先</Text>
+        <Text style={styles.helpText}>
+          未指定のまま保存した写真は、同期前に写真詳細から保存先を指定してください。
+        </Text>
+        <View style={styles.folderGrid}>
+          {driveFolderCandidates.map((folder) => (
+            <Pressable
+              key={folder.id}
+              onPress={() => selectDriveFolder(folder)}
+              style={[
+                styles.folderChip,
+                driveFolderId === folder.id ? styles.folderChipSelected : null
+              ]}
+            >
+              <Text
+                style={[
+                  styles.folderChipText,
+                  driveFolderId === folder.id ? styles.folderChipTextSelected : null
+                ]}
+              >
+                {folder.name}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
       </View>
       <View style={styles.panel}>
         <Text style={styles.label}>ファイル名</Text>
@@ -124,6 +186,11 @@ const styles = StyleSheet.create({
     color: "#25313d",
     fontWeight: "700"
   },
+  helpText: {
+    color: "#5f6b76",
+    fontSize: 13,
+    lineHeight: 18
+  },
   input: {
     borderWidth: 1,
     borderColor: "#c8d0d8",
@@ -141,6 +208,29 @@ const styles = StyleSheet.create({
   errorText: {
     color: "#b3261e",
     fontWeight: "700"
+  },
+  folderGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8
+  },
+  folderChip: {
+    borderWidth: 1,
+    borderColor: "#b8c3ce",
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 9
+  },
+  folderChipSelected: {
+    backgroundColor: "#1b5f8f",
+    borderColor: "#1b5f8f"
+  },
+  folderChipText: {
+    color: "#25313d",
+    fontWeight: "700"
+  },
+  folderChipTextSelected: {
+    color: "#fff"
   }
 });
 

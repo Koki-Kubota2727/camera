@@ -29,12 +29,12 @@ export default function HomeScreen() {
       <View style={styles.panel}>
         <InfoRow label="撮影者コード" value={settings?.photographerCode ?? "-"} />
         <InfoRow label="保存先フォルダ" value={settings?.targetFolderName ?? "-"} />
-        <InfoRow label="Drive保存先" value={settings?.driveFolderName ?? "未設定"} />
+        <InfoRow label="既定Drive保存先" value={settings?.driveFolderName ?? "未設定"} />
         <InfoRow label="未同期写真" value={`${localPhotoCount}枚`} />
         <InfoRow label="最終同期" value="-" />
       </View>
 
-      <PrimaryButton label="写真を撮る" onPress={() => router.push("/camera")} />
+      <PrimaryButton label="写真を撮る" onPress={() => router.push("/shoot")} />
       <PrimaryButton
         label="保存先・撮影者を設定"
         variant="secondary"

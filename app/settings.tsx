@@ -24,7 +24,9 @@ export default function SettingsScreen() {
         targetFolderId: `local:${folderName}`,
         targetFolderName: folderName,
         driveFolderId: settings?.driveFolderId ?? null,
-        driveFolderName: settings?.driveFolderName ?? null
+        driveFolderName: settings?.driveFolderName ?? null,
+        driveParentFolderId: settings?.driveParentFolderId ?? null,
+        driveParentFolderName: settings?.driveParentFolderName ?? null
       });
       router.back();
     } catch (error: unknown) {
@@ -77,16 +79,31 @@ export default function SettingsScreen() {
       </View>
 
       <View style={styles.panel}>
-        <Text style={styles.label}>Google Drive保存先</Text>
+        <Text style={styles.label}>Google Drive親フォルダ</Text>
+        <Text style={styles.driveFolderName}>
+          {settings?.driveParentFolderName ?? "未選択"}
+        </Text>
+        <Text style={styles.helpText}>
+          保存先候補を並べるための親フォルダをGoogle Driveから選んでください。
+        </Text>
+        <PrimaryButton
+          label="親フォルダを選ぶ"
+          onPress={() => router.push({ pathname: "/drive/folder-picker", params: { mode: "parent" } })}
+          variant="secondary"
+        />
+      </View>
+
+      <View style={styles.panel}>
+        <Text style={styles.label}>Google Drive保存先候補</Text>
         <Text style={styles.driveFolderName}>
           {settings?.driveFolderName ?? "未選択"}
         </Text>
         <Text style={styles.helpText}>
-          あらかじめ作成した保存用フォルダをGoogle Driveから選んでください。
+          親フォルダ直下の子フォルダから、実際のアップロード先を選びます。
         </Text>
         <PrimaryButton
-          label="Driveから選ぶ"
-          onPress={() => router.push("/drive/folder-picker")}
+          label="候補から保存先を選ぶ"
+          onPress={() => router.push({ pathname: "/drive/folder-picker", params: { mode: "target" } })}
           variant="secondary"
         />
       </View>

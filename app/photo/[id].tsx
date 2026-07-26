@@ -1,7 +1,7 @@
 import { Image } from "react-native";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useCallback, useState } from "react";
-import { Alert, StyleSheet, Text, TextInput, View } from "react-native";
+import { Alert, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { InfoRow } from "@/components/InfoRow";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { Screen } from "@/components/Screen";
@@ -14,15 +14,27 @@ import {
   updatePhotoMetadata
 } from "@/repositories/photoRepository";
 import { deleteLocalPhotoFile } from "@/services/filesystem/photoFileSystem";
+import { listDriveFolders } from "@/services/googleDrive/driveApi";
 import { useAppStore } from "@/store/appStore";
 import type { Photo } from "@/types/photo";
+import { formatDebugError } from "@/utils/debugError";
+
+type DriveFolderCandidate = {
+  id: string;
+  name: string;
+};
 
 export default function PhotoDetailScreen() {
   const { id } = useLocalSearchParams<{ id?: string }>();
+  const settings = useAppStore((state) => state.settings);
   const refreshLocalPhotoCount = useAppStore((state) => state.refreshLocalPhotoCount);
   const [photo, setPhoto] = useState<Photo | null>(null);
   const [fileName, setFileName] = useState("");
   const [folderName, setFolderName] = useState("");
+  const [driveFolderId, setDriveFolderId] = useState<string | null>(null);
+  const [driveFolderName, setDriveFolderName] = useState<string | null>(null);
+  const [driveFolderCandidates, setDriveFolderCandidates] = useState<DriveFolderCandidate[]>([]);
+  const [message, setMessage] = useState<string | null>(null);
   const [memo, setMemo] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -34,16 +46,32 @@ export default function PhotoDetailScreen() {
     setPhoto(nextPhoto);
     setFileName(nextPhoto?.currentFileName ?? "");
     setFolderName(nextPhoto?.targetFolderNameCache ?? "");
+    setDriveFolderId(nextPhoto?.driveFolderId ?? null);
+    setDriveFolderName(nextPhoto?.driveFolderName ?? null);
     setMemo(nextPhoto?.memo ?? "");
   }, [id]);
 
+  const loadDriveFolderCandidates = useCallback(async (): Promise<void> => {
+    if (!settings?.driveParentFolderId) {
+      setDriveFolderCandidates([]);
+      return;
+    }
+    const folders = await listDriveFolders(settings.driveParentFolderId);
+    setDriveFolderCandidates(folders.map((folder) => ({ id: folder.id, name: folder.name })));
+  }, [settings?.driveParentFolderId]);
+
   useFocusEffect(
     useCallback(() => {
-      load().catch((error: unknown) => {
-        console.error("Failed to load photo", error);
+      void Promise.all([load(), loadDriveFolderCandidates()]).catch((error: unknown) => {
+        setMessage(formatDebugError("photo detail load", error));
       });
-    }, [load])
+    }, [load, loadDriveFolderCandidates])
   );
+
+  const selectDriveFolder = (folder: DriveFolderCandidate): void => {
+    setDriveFolderId(folder.id);
+    setDriveFolderName(folder.name);
+  };
 
   const save = async (): Promise<void> => {
     if (!photo) {
@@ -63,6 +91,8 @@ export default function PhotoDetailScreen() {
         currentFileName,
         targetFolderId: `local:${nextFolderName}`,
         targetFolderNameCache: nextFolderName,
+        driveFolderId,
+        driveFolderName,
         memo: memo.trim() ? memo.trim() : null
       });
       await load();
@@ -115,6 +145,7 @@ export default function PhotoDetailScreen() {
         <InfoRow label="撮影者" value={photo.photographerCode} />
         <InfoRow label="撮影日時" value={new Date(photo.capturedAt).toLocaleString()} />
         <InfoRow label="状態" value={formatUploadStatus(photo.uploadStatus)} />
+        <InfoRow label="Drive保存先" value={driveFolderName ?? "未指定"} />
       </View>
       <View style={styles.panel}>
         <Text style={styles.label}>ファイル名</Text>
@@ -132,6 +163,28 @@ export default function PhotoDetailScreen() {
           ))}
         </View>
         <TextInput onChangeText={setFolderName} style={styles.input} value={folderName} />
+        <Text style={styles.label}>写真ごとのDrive保存先</Text>
+        <View style={styles.folderGrid}>
+          {driveFolderCandidates.map((folder) => (
+            <Pressable
+              key={folder.id}
+              onPress={() => selectDriveFolder(folder)}
+              style={[
+                styles.folderChip,
+                driveFolderId === folder.id ? styles.folderChipSelected : null
+              ]}
+            >
+              <Text
+                style={[
+                  styles.folderChipText,
+                  driveFolderId === folder.id ? styles.folderChipTextSelected : null
+                ]}
+              >
+                {folder.name}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
         <Text style={styles.label}>メモ</Text>
         <TextInput
           multiline
@@ -140,6 +193,7 @@ export default function PhotoDetailScreen() {
           value={memo}
         />
       </View>
+      {message ? <Text selectable style={styles.message}>{message}</Text> : null}
       <PrimaryButton disabled={saving} label={saving ? "保存中" : "変更を保存"} onPress={() => void save()} />
       <PrimaryButton label="削除" onPress={remove} variant="danger" />
     </Screen>
@@ -193,10 +247,26 @@ const styles = StyleSheet.create({
     color: "#25313d",
     fontWeight: "700"
   },
+  folderChipText: {
+    color: "#25313d",
+    fontWeight: "700"
+  },
+  folderChipTextSelected: {
+    color: "#fff"
+  },
   folderChipSelected: {
     color: "#fff",
     backgroundColor: "#1b5f8f",
     borderColor: "#1b5f8f"
+  },
+  message: {
+    backgroundColor: "#300",
+    color: "#fff",
+    fontFamily: "monospace",
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 16,
+    padding: 10
   }
 });
 
