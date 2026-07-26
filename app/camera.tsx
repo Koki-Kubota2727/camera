@@ -1,7 +1,7 @@
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { router } from "expo-router";
-import { useRef, useState } from "react";
-import { Alert, StyleSheet, Text, View } from "react-native";
+import { useEffect, useRef, useState } from "react";
+import { Alert, Platform, StyleSheet, Text, View } from "react-native";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { Screen } from "@/components/Screen";
 import { useAppStore } from "@/store/appStore";
@@ -9,6 +9,14 @@ import { useAppStore } from "@/store/appStore";
 type CameraRef = React.ElementRef<typeof CameraView>;
 
 export default function CameraScreen() {
+  if (Platform.OS === "web") {
+    return <WebCameraScreen />;
+  }
+
+  return <NativeCameraScreen />;
+}
+
+function NativeCameraScreen() {
   const [permission, requestPermission] = useCameraPermissions();
   const cameraRef = useRef<CameraRef | null>(null);
   const [taking, setTaking] = useState(false);
@@ -80,6 +88,146 @@ export default function CameraScreen() {
   );
 }
 
+function WebCameraScreen() {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const [ready, setReady] = useState(false);
+  const [taking, setTaking] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const settings = useAppStore((state) => state.settings);
+
+  const stopCamera = (): void => {
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+    setReady(false);
+  };
+
+  const startCamera = async (): Promise<void> => {
+    setErrorMessage(null);
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error("このブラウザではカメラを利用できません。");
+      }
+      stopCamera();
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: "environment" },
+          width: { ideal: 1920 },
+          height: { ideal: 1080 }
+        },
+        audio: false
+      });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+        setReady(true);
+      }
+    } catch (error: unknown) {
+      setErrorMessage(formatCameraError(error));
+    }
+  };
+
+  const takePhoto = (): void => {
+    if (!videoRef.current || !ready) {
+      setErrorMessage("カメラの準備がまだ完了していません。");
+      return;
+    }
+    setTaking(true);
+    try {
+      const video = videoRef.current;
+      const width = video.videoWidth;
+      const height = video.videoHeight;
+      if (width <= 0 || height <= 0) {
+        throw new Error("カメラ映像のサイズを取得できませんでした。");
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext("2d");
+      if (!context) {
+        throw new Error("撮影画像を作成できませんでした。");
+      }
+      context.drawImage(video, 0, 0, width, height);
+      const dataUrl = canvas.toDataURL("image/jpeg", 0.92);
+      const photoKey = `web-photo-${Date.now()}`;
+      sessionStorage.setItem(photoKey, dataUrl);
+      stopCamera();
+      router.push({ pathname: "/photo-review", params: { uri: `web-temp:${photoKey}` } });
+    } catch (error: unknown) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setTaking(false);
+    }
+  };
+
+  useEffect(() => {
+    void startCamera();
+    return stopCamera;
+  }, []);
+
+  return (
+    <View style={styles.root}>
+      {createVideoElement(videoRef)}
+      <View style={styles.topBar}>
+        <Text style={styles.metaLabel}>保存先</Text>
+        <Text numberOfLines={1} style={styles.metaValue}>
+          {settings?.targetFolderName ?? "-"}
+        </Text>
+        <Text style={styles.code}>{settings?.photographerCode ?? "-"}</Text>
+      </View>
+      {errorMessage ? (
+        <View style={styles.webErrorPanel}>
+          <Text style={styles.permissionTitle}>カメラを起動できません</Text>
+          <Text style={styles.permissionText}>{errorMessage}</Text>
+          <PrimaryButton label="もう一度許可する" onPress={() => void startCamera()} />
+        </View>
+      ) : null}
+      <View style={styles.bottomBar}>
+        <PrimaryButton
+          label="保存先変更"
+          onPress={() => router.push("/settings")}
+          variant="secondary"
+        />
+        <PrimaryButton
+          disabled={taking || !ready}
+          label={taking ? "撮影中" : ready ? "撮影" : "準備中"}
+          onPress={takePhoto}
+        />
+      </View>
+    </View>
+  );
+}
+
+const createVideoElement = (ref: React.RefObject<HTMLVideoElement | null>) =>
+  // React Native Web上でブラウザ標準のvideo要素を直接使う。
+  // expo-cameraのWeb実装よりGitHub Pages上で安定して動く。
+  // eslint-disable-next-line react/no-unknown-property
+  <video ref={ref} autoPlay playsInline muted style={webVideoStyle} />;
+
+const webVideoStyle = {
+  width: "100%",
+  height: "100%",
+  objectFit: "cover",
+  backgroundColor: "#000"
+} as const;
+
+const formatCameraError = (error: unknown): string => {
+  if (!(error instanceof DOMException)) {
+    return error instanceof Error ? error.message : String(error);
+  }
+  if (error.name === "NotAllowedError") {
+    return "ブラウザでカメラ利用が拒否されています。アドレスバー付近の権限設定からカメラを許可してください。";
+  }
+  if (error.name === "NotFoundError") {
+    return "利用できるカメラが見つかりません。";
+  }
+  if (error.name === "NotReadableError") {
+    return "他のアプリがカメラを使用中の可能性があります。";
+  }
+  return error.message;
+};
+
 const styles = StyleSheet.create({
   root: {
     flex: 1,
@@ -133,5 +281,15 @@ const styles = StyleSheet.create({
   permissionText: {
     color: "#52606d",
     lineHeight: 20
+  },
+  webErrorPanel: {
+    position: "absolute",
+    top: 120,
+    left: 16,
+    right: 16,
+    backgroundColor: "#fff",
+    borderRadius: 8,
+    padding: 16,
+    gap: 12
   }
 });

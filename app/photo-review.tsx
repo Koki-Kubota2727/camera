@@ -16,6 +16,7 @@ import { useAppStore } from "@/store/appStore";
 
 export default function PhotoReviewScreen() {
   const { uri } = useLocalSearchParams<{ uri?: string }>();
+  const imageUri = resolveReviewImageUri(uri);
   const settings = useAppStore((state) => state.settings);
   const refreshLocalPhotoCount = useAppStore((state) => state.refreshLocalPhotoCount);
   const capturedAt = useMemo(() => new Date(), []);
@@ -35,7 +36,7 @@ export default function PhotoReviewScreen() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const save = async (): Promise<void> => {
-    if (!uri || !settings) {
+    if (!imageUri || !settings) {
       Alert.alert("保存できません", "撮影データまたは設定が見つかりません。");
       return;
     }
@@ -45,7 +46,7 @@ export default function PhotoReviewScreen() {
       const photoId = randomUUID();
       const existingNames = await listCurrentFileNames();
       const currentFileName = createUniqueFileName(sanitizeFileName(fileName), existingNames);
-      const persisted = await persistCapturedPhoto(uri, photoId);
+      const persisted = await persistCapturedPhoto(imageUri, photoId);
       await insertPhoto({
         id: photoId,
         localUri: persisted.localUri,
@@ -69,7 +70,7 @@ export default function PhotoReviewScreen() {
     }
   };
 
-  if (!uri) {
+  if (!imageUri) {
     return (
       <Screen>
         <Text>撮影データが見つかりません。</Text>
@@ -79,7 +80,7 @@ export default function PhotoReviewScreen() {
 
   return (
     <Screen>
-      <Image source={{ uri }} style={styles.preview} resizeMode="cover" />
+      <Image source={{ uri: imageUri }} style={styles.preview} resizeMode="cover" />
       <View style={styles.panel}>
         <InfoRow label="保存先" value={settings?.targetFolderName ?? "-"} />
         <InfoRow label="撮影者" value={settings?.photographerCode ?? "-"} />
@@ -142,3 +143,16 @@ const styles = StyleSheet.create({
     fontWeight: "700"
   }
 });
+
+const resolveReviewImageUri = (uri: string | undefined): string | null => {
+  if (!uri) {
+    return null;
+  }
+  if (!uri.startsWith("web-temp:")) {
+    return uri;
+  }
+  if (typeof sessionStorage === "undefined") {
+    return null;
+  }
+  return sessionStorage.getItem(uri.replace("web-temp:", ""));
+};
