@@ -23,6 +23,7 @@
     },
     "plugins": ["expo-router", "expo-camera", "expo-sqlite", "expo-secure-store"],
     "experiments": {
+      "baseUrl": "/camera",
       "typedRoutes": true
     }
   }
